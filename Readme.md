@@ -12,6 +12,37 @@ EXPRESS originally started as part of the PDDI (Product Definition Data Interfac
 
 Unlike general-purpose programming languages, EXPRESS is purpose-built for defining *what data looks like* and *what invariants it must satisfy*. Its syntax is Pascal-like: schemas, entities, types, functions, procedures, and rules compose in a block-structured, strongly typed style directly descended from the Wirth tradition. Keywords are globally reserved, identifiers are case-insensitive, and the type system includes novel features such as SELECT (discriminated union over entity types), ONEOF/AND/ANDOR supertype constraints, and built-in aggregation types (SET, BAG, LIST, ARRAY) with bound specifications.
 
+## How does EXPRESS look
+
+```
+SCHEMA calendar;
+
+TYPE months = ENUMERATION OF (January, February, March, April, May, June,
+                    July, August, September, October, November, December);
+
+END_TYPE;
+
+ENTITY date;
+day : INTEGER;
+month : months;
+year : INTEGER;
+
+WHERE
+days_ok : {1 <= day <= 31};
+year_ok : year > 0;
+date_ok : valid_date(SELF);
+
+END_ENTITY;
+
+FUNCTION valid_date (par : date) : BOOLEAN;
+(* returns FALSE if its input is not a valid date *)
+  RETURN(FALSE); -- stub
+END_FUNCTION;
+
+END_SCHEMA; -- calendar
+```
+Example (modified) from the 1994 book "Information Modeling the EXPRESS Way" by Schenck and Wilson
+
 ## Why is EXPRESS interesting
 
 I came in contact with ISO 10303 and the EXPRESS language many years ago when I was working as a systems engineering consultant and mangager for government projects. EXPRESS is fascinating for different reasons. I'm generally interested in programming language design and implemented many parsers and compilers over the years, particularly in the Algol and Wirth lineage of programming languages (such as [Oberon](https://github.com/rochus-keller/Oberon), [ActiveOberon](https://github.com/rochus-keller/ActiveOberon), [Simula 67](https://github.com/rochus-keller/simula/), and more recently [Luon](https://github.com/rochus-keller/Luon) and [Micron](https://github.com/rochus-keller/Micron)). So EXPRESS was on my list for a long time for this reason, but also because I wanted a tool to do specific analyses on the STEP models. 
@@ -26,16 +57,16 @@ In that context, it is interesting to note that a parallel and equally instructi
 
 The lesson from both STEP and ISO 15926 is consistent: every attempt to replace EXPRESS has either failed outright, produced a partial mapping that loses essential semantics, or ended up using EXPRESS as the underlying normative substrate. 
 
-#### Status on June 7, 2026
+## Status on June 7, 2026
 
 The parser finally works and generates an AST (ready for validation and further processing). It is able to parse my ~1000 EXPRESS files (~37 MB of code) in ~5 seconds on my Lenovo T480. I even found a good dozen syntax errors in these files (some of which from the official standards). The grammar was derived from the one included with ISO 10303-11:2004 using my [EbnfStudio](https://github.com/rochus-keller/ebnfstudio/). I even added exact LL(k) calculation to EbnfStudio to make sure it doesn't overlook an ambiguity. Next I will implement a cross-referencing tool with semantic navigation.
 
 
-#### Precompiled versions
+## Precompiled versions
 
 Not available at this time.
 
-### Build Steps
+## Build Steps
 
 Follow these steps if you want to build the application yourself:
 
