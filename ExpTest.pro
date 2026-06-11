@@ -28,7 +28,8 @@ HEADERS += \
     ExpRowCol.h \
     ExpSynTree.h \
     ExpToken.h \
-    ExpTokenType.h
+    ExpTokenType.h \
+    ExpValidator2.h
 
 SOURCES += \
     ExpAst.cpp \
@@ -39,7 +40,8 @@ SOURCES += \
     ExpSynTree.cpp \
     ExpTest.cpp \
     ExpToken.cpp \
-    ExpTokenType.cpp
+    ExpTokenType.cpp \
+    ExpValidator2.cpp
 
 
 

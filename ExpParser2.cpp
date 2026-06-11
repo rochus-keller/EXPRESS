@@ -472,11 +472,13 @@ Declaration* Parser2::addDecl(const Token& id, Declaration::Kind kind, bool chec
     return d;
 }
 
-Declaration *Parser2::addMemberTo(Declaration *super, const Token &id, Ast::Declaration::Kind kind)
+Declaration *Parser2::addPseudoMemberTo(Declaration *super, const Token &id, Ast::Declaration::Kind kind)
 {
     Declaration* d = new Declaration();
     d->kind = kind;
-    d->setName(id.d_val);
+    d->name = id.d_val;
+    d->n = 0; // name is a reference, not for lookup
+    // otherwise find(scopeStack.back()) finds the pseudo member instead of the name referred to
     d->pos = id.toRowCol();
     super->appendMember(d);
     return d;
@@ -571,6 +573,7 @@ void Parser2::reference_clause()
     Token schemaName = cur;
 
     Declaration* imp = addDecl(schemaName, Declaration::Reference, false);
+    imp->n = 0; // this is a pseudo decl; name is still valid for reference
 
     if( la.d_type == Tok_Lpar ) {
         expect(Tok_Lpar, false, "reference_clause");
@@ -593,6 +596,7 @@ void Parser2::use_clause()
     Token schemaName = cur;
 
     Declaration* imp = addDecl(schemaName, Declaration::Use, false);
+    imp->n = 0; // this is a pseudo decl; name is still valid for reference
 
     if( la.d_type == Tok_Lpar ) {
         expect(Tok_Lpar, false, "use_clause");
@@ -621,7 +625,7 @@ void Parser2::from_as(Ast::Declaration * imp)
     what->kind = Declaration::Imported;
     what->setName(as.d_val);
     what->pos = as.toRowCol();
-    what->data = id.d_val;
+    what->data = id.d_val; // can be different from as.d_val
     imp->appendMember(what);
 }
 
@@ -752,11 +756,11 @@ void Parser2::subtype_declaration(Declaration* entity)
     expect(Tok_OF, false, "subtype_declaration");
     expect(Tok_Lpar, false, "subtype_declaration");
     expect(Tok_ident, false, "subtype_declaration");
-    addMemberTo(entity, cur, Declaration::Supertype);
+    addPseudoMemberTo(entity, cur, Declaration::Supertype);
     while( la.d_type == Tok_Comma ) {
         expect(Tok_Comma, false, "subtype_declaration");
         expect(Tok_ident, false, "subtype_declaration");
-        addMemberTo(entity, cur, Declaration::Supertype);
+        addPseudoMemberTo(entity, cur, Declaration::Supertype);
     }
     expect(Tok_Rpar, false, "subtype_declaration");
 }
@@ -1673,11 +1677,11 @@ void Parser2::subtype_constraint_body(Declaration* d)
         expect(Tok_TOTAL_OVER, false, "total_over");
         expect(Tok_Lpar, false, "total_over");
         expect(Tok_ident, false, "total_over");
-        addMemberTo(d, cur, Declaration::TotalOver);
+        addPseudoMemberTo(d, cur, Declaration::TotalOver);
         while( la.d_type == Tok_Comma ) {
             expect(Tok_Comma, false, "total_over");
             expect(Tok_ident, false, "total_over");
-            addMemberTo(d, cur, Declaration::TotalOver);
+            addPseudoMemberTo(d, cur, Declaration::TotalOver);
         }
         expect(Tok_Rpar, false, "total_over");
         expect(Tok_Semi, false, "total_over");
@@ -1929,12 +1933,12 @@ void Parser2::rule_head(Declaration*& rule)
 
     expect(Tok_ident, false, "rule_head");
     if( rule )
-        addMemberTo(rule, cur, Declaration::RuleFor);
+        addPseudoMemberTo(rule, cur, Declaration::RuleFor);
     while( la.d_type == Tok_Comma ) {
         expect(Tok_Comma, false, "rule_head");
         expect(Tok_ident, false, "rule_head");
         if( rule )
-            addMemberTo(rule, cur, Declaration::RuleFor);
+            addPseudoMemberTo(rule, cur, Declaration::RuleFor);
     }
     expect(Tok_Rpar, false, "rule_head");
     expect(Tok_Semi, false, "rule_head");

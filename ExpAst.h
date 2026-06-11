@@ -179,7 +179,7 @@ namespace Ast
             SelectItem,   // select type item (ident reference)
             Use,          // USE
             Reference,    // REFERENCE
-            Imported,     // USE/REFERENCE (imported)
+            Imported,     // USE/REFERENCE imported. data: foreign name or decl ref when validated
             SubtypeConstraint, // SUBTYPE_CONSTRAINT
             Supertype,     // SUBTYPE OF (parent1, parent2, ...)
             RuleFor,      // RULE FOR (entity1, entity2, ...)
@@ -216,6 +216,7 @@ namespace Ast
 
         QList<Declaration*> getParams() const;
         Declaration* find(const QByteArray& name, bool recursive = true) const;
+        Declaration* findInImports(const QByteArray& name) const;
         Declaration* getLast() const;
         Declaration* getNext() const { return next; }
         void appendMember(Declaration*);
@@ -356,6 +357,20 @@ namespace Ast
         QHash<Declaration*,SymList> uses;
         QHash<Declaration*,DeclList> subs;
         Xref():syms(0){}
+    };
+
+    struct Import {
+        QByteArray name;
+        Declaration* importer;
+        RowCol importedAt;
+        Declaration* resolved; // module
+        Import():resolved(0),importer(0){}
+        bool equals( const Import& other) const;
+    };
+
+    class Importer {
+    public:
+        virtual Declaration* loadSchema( const Ast::Import& imp ) = 0;
     };
 
     class AstModel

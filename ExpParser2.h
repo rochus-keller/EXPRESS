@@ -163,7 +163,7 @@ namespace Exp {
 
     protected:
         Ast::Declaration* addDecl(const Token& id, Ast::Declaration::Kind kind, bool checkDuplicate = true);
-        Ast::Declaration* addMemberTo(Ast::Declaration* super, const Token& id, Ast::Declaration::Kind kind);
+        Ast::Declaration* addPseudoMemberTo(Ast::Declaration* super, const Token& id, Ast::Declaration::Kind kind);
         void error(const Token& t, const QString& msg);
         void error(const RowCol& rc, const QString& msg);
 

@@ -7,6 +7,8 @@
 #include "ExpLexer.h"
 #include "ExpParser.h"
 #include "ExpParser2.h"
+#include "ExpValidator2.h"
+#include "ExpToken.h"
 
 static QStringList collectFiles( const QDir& dir )
 {
@@ -114,6 +116,93 @@ static void testParser2( const QStringList& files )
     qDebug() << "Processed" << ok + fail << "files," << ok << "ok," << fail << "fail";
 }
 
+class Loader : public Exp::Ast::Importer
+{
+public:
+    ~Loader() {
+        foreach( Exp::Ast::Declaration* schema, schemas )
+            delete schema;
+    }
+    Exp::Ast::AstModel mdl;
+    QList<Exp::Ast::Declaration*> schemas;
+
+    Exp::Ast::Declaration* findSchema(const QByteArray& name)
+    {
+        const char* n = Exp::Token::getSymbol(name.toUpper()).constData();
+        foreach( Exp::Ast::Declaration* d, schemas )
+        {
+            if( d->n == n )
+                return d;
+        }
+        return 0;
+    }
+
+    Exp::Ast::Declaration* loadSchema( const Exp::Ast::Import& imp )
+    {
+        Exp::Ast::Declaration* schema = findSchema(imp.name);
+        if( schema == 0 || schema->hasErrors )
+            return 0;
+
+        if( schema->validated )
+            return schema;
+
+        Exp::Validator2 v(&mdl, this);
+
+        v.validate(schema);
+        Exp::Ast::SchemaData sd = schema->data.value<Exp::Ast::SchemaData>();
+        if( !v.errors.isEmpty() )
+        {
+            qCritical() << "!!!! Error validating schema" << schema->name << sd.sourcePath;
+            foreach( const Exp::Validator2::Error& e, v.errors )
+                qCritical() << "    " << e.pos.d_row << ":" << e.pos.d_col << ":" << e.msg.toUtf8().constData();
+
+            return 0;
+        }else
+        {
+            qDebug() << "**** Validated schema" << schema->name << sd.sourcePath;
+            return schema;
+        }
+    }
+};
+
+static void testParserValidator( const QStringList& files )
+{
+    Loader loader;
+    int ok = 0, fail = 0;
+    foreach( const QString& path, files )
+    {
+        Lex2 lex;
+        lex.lex.setStream(path);
+        Exp::Parser2 p(&loader.mdl, &lex);
+        p.RunParser();
+        if( !p.errors.isEmpty() )
+        {
+            fail++;
+            qCritical() << "!!!! Error parsing" << path;
+            foreach( const Exp::Parser2::Error& e, p.errors )
+                qCritical() << "    " << e.pos.d_row << ":" << e.pos.d_col << ":" << e.msg.toUtf8().constData();
+        }else
+        {
+            ok++;
+            loader.schemas << p.takeSchemas();
+        }
+    }
+    qDebug() << "Parsed" << ok + fail << "files," << ok << "ok," << fail << "fail";
+    if( fail )
+        return;
+
+    foreach( Exp::Ast::Declaration* schema, loader.schemas )
+    {
+        if( schema->validated )
+            continue;
+
+        Exp::Ast::Import imp;
+        imp.name = schema->name;
+        loader.loadSchema(imp);
+        if( schema->hasErrors )
+            return;
+    }
+}
 
 int main(int argc, char *argv[])
 {
@@ -121,7 +210,7 @@ int main(int argc, char *argv[])
     a.setOrganizationName("me@rochus-keller.ch");
     a.setOrganizationDomain("https://github.com/rochus-keller/Simula");
     a.setApplicationName("ExpTest");
-    a.setApplicationVersion("2026-06-06");
+    a.setApplicationVersion("2026-06-11");
 
     QTextStream out(stdout);
     out << a.applicationName() << " version: " << a.applicationVersion() <<
@@ -175,7 +264,7 @@ int main(int argc, char *argv[])
     QElapsedTimer t;
     t.start();
 
-    testParser2(files);
+    testParserValidator(files);
 
     qDebug() << "run for" << t.elapsed() << "[ms]";
 

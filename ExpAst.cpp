@@ -195,6 +195,49 @@ Declaration* Declaration::find(const QByteArray& name, bool recursive) const
     return 0;
 }
 
+Declaration *Declaration::findInImports(const QByteArray &name) const
+{
+    Q_ASSERT(kind == Schema);
+
+    const char* n = Token::getSymbol(name.toUpper()).constData();
+
+    // Look through all USE/REFERENCE imports until found
+    Declaration* useOrRef = link;
+    while( useOrRef )
+    {
+        if( useOrRef->kind == Declaration::Use || useOrRef->kind == Declaration::Reference )
+        {
+            if( useOrRef->link )
+            {
+                Declaration* import = useOrRef->link;
+                while( import )
+                {
+                    Q_ASSERT( import->kind == Declaration::Imported );
+                    if( import->n == n ) // canonical name comparison
+                    {
+                        if( import->validated && !import->hasErrors )
+                            return import->data.value<Declaration*>();
+                        else
+                            return 0;
+                    }
+                    import = import->next;
+                }
+            }else if( useOrRef->validated && !useOrRef->hasErrors )
+            {
+                // If USE/REFERENCE without explicit items, check the foreign schema directly
+                Declaration* foreignSchema = useOrRef->data.value<Declaration*>();
+                Q_ASSERT(foreignSchema);
+                Declaration* resolved = foreignSchema->findInImports(name);
+                // TODO: the result could be a symbol imported in the foreignSchema but not exported by it
+                return resolved;
+            }else
+                return 0;
+        }
+        useOrRef = useOrRef->next;
+    }
+    return 0;
+}
+
 QList<Declaration*> Declaration::getParams() const
 {
     QList<Declaration*> res;
@@ -219,7 +262,7 @@ void Declaration::setName(const QByteArray &name_)
 {
     name = name_;
     if( !name.isEmpty() )
-        n = Token::getSymbol(name).constData();
+        n = Token::getSymbol(name.toUpper()).constData();
     else
         n = 0;
 }
