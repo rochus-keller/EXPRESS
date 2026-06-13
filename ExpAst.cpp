@@ -26,7 +26,7 @@ using namespace Ast;
 Declaration* AstModel::globalScope = 0;
 Type* AstModel::types[Type::MaxKind] = {0};
 
-const char* Type::name[] = {
+const char* Type::s_name[] = {
     "Undefined",
     "NoType",
     "BINARY",
@@ -42,6 +42,7 @@ const char* Type::name[] = {
     "SET",
     "ENUMERATION",
     "SELECT",
+    "ENTITY",
     "AGGREGATE",
     "GENERIC",
     "GENERIC_ENTITY",
@@ -52,7 +53,6 @@ const char* Declaration::s_name[] = {
     "Invalid",
     "Scope",
     "Schema",
-    "Entity",
     "TypeDecl",
     "ConstDecl",
     "Attribute",
@@ -68,19 +68,60 @@ const char* Declaration::s_name[] = {
     "SubtypeConstraint",
 };
 
-// Node
-
 void Node::setType(Type* t)
 {
+    if( _ty == t )
+        return;
+    if( _ty != 0 )
+    {
+        if( ownstype )
+            delete _ty;
+        ownstype = false;
+        _ty = 0;
+    }
+    if( t && !t->owned )
+    {
+        ownstype = true;
+        t->owned = true;
+    }
     _ty = t;
 }
 
 Node::~Node()
 {
-    // type ownership is managed elsewhere (ownstype flag on Declaration, or by AstModel for basic types)
+    if( _ty && ownstype )
+        delete _ty;
 }
 
-// Type
+
+Declaration *Type::find(const char *n, bool recursive) const
+{
+    for( int i = 0; i < subs.size(); i++ )
+    {
+        if(subs[i]->n == n)
+            return subs[i];
+    }
+#if 0
+    // TODO
+    if( recursive && (kind == ENTITY) )
+    {
+        foreach( Declaration* member, subs)
+        {
+            if( member->kind == Declaration::Supertype )
+            {
+                Declaration* parent = find(member->name, member->pos);
+                if( parent && parent->kind == Declaration::TypeDecl && parent->type() && parent->type()->kind == Type::ENTITY )
+                {
+                    d = parent->type(n, recursive);
+                    if( d )
+                        return d;
+                }
+            }
+        }
+    }
+#endif
+    return 0;
+}
 
 Type::~Type()
 {
@@ -107,17 +148,23 @@ Type::~Type()
     case GENERIC_ENTITY:
         delete text;
         break;
+    case ENTITY:
+        if(expr)
+            delete expr;
+        break;
     default:
         break;
     }
-    // TODO: subs are not owned by Type unless they are anonymous
+    foreach( Declaration* d, subs )
+    {
+        if( d->kind != Declaration::Enumerator )
+            Declaration::deleteAll(d);
+    }
     // decl is not owned
 }
 
 Declaration::~Declaration()
 {
-    if( ownstype && type() )
-        delete type();
     if( link )
     {
         Declaration* cur = link;
@@ -130,7 +177,7 @@ Declaration::~Declaration()
     }
     if( body )
         Statement::deleteAll(body);
-    if( (kind == ConstDecl || kind == Entity || kind == SubtypeConstraint) && expr )
+    if( (kind == ConstDecl || kind == SubtypeConstraint) && expr )
         delete expr;
 }
 
@@ -180,9 +227,8 @@ Declaration* Declaration::getLast() const
     return cur;
 }
 
-Declaration* Declaration::find(const QByteArray& name, bool recursive) const
+Declaration* Declaration::find(const char* n, bool recursive) const
 {
-    const char* n = Token::getSymbol(name.toUpper()).constData();
     Declaration* cur = link;
     while( cur )
     {
@@ -191,15 +237,13 @@ Declaration* Declaration::find(const QByteArray& name, bool recursive) const
         cur = cur->next;
     }
     if( recursive && outer )
-        return outer->find(name, true);
+        return outer->find(n, true);
     return 0;
 }
 
-Declaration *Declaration::findInImports(const QByteArray &name) const
+Declaration *Declaration::findInImports(const char* n) const
 {
     Q_ASSERT(kind == Schema);
-
-    const char* n = Token::getSymbol(name.toUpper()).constData();
 
     // Look through all USE/REFERENCE imports until found
     Declaration* useOrRef = link;
@@ -227,11 +271,14 @@ Declaration *Declaration::findInImports(const QByteArray &name) const
                 // If USE/REFERENCE without explicit items, check the foreign schema directly
                 Declaration* foreignSchema = useOrRef->data.value<Declaration*>();
                 Q_ASSERT(foreignSchema);
-                Declaration* resolved = foreignSchema->findInImports(name);
+                Declaration* resolved = foreignSchema->find(n);
+                if( resolved )
+                    return resolved;
+                resolved = foreignSchema->findInImports(n);
                 // TODO: the result could be a symbol imported in the foreignSchema but not exported by it
-                return resolved;
-            }else
-                return 0;
+                if( resolved )
+                    return resolved;
+            }
         }
         useOrRef = useOrRef->next;
     }
@@ -493,7 +540,7 @@ Declaration* AstModel::getTopScope() const
         Declaration* d = scopes[i];
         if( d->kind == Declaration::Schema || d->kind == Declaration::Function
             || d->kind == Declaration::Procedure || d->kind == Declaration::Rule
-            || d->kind == Declaration::Entity )
+            || d->kind == Declaration::TypeDecl )
             return d;
     }
     return 0;
@@ -513,6 +560,23 @@ void AstModel::cleanupGlobals()
     }
 }
 
+DeclList AstModel::toList(Declaration *d)
+{
+    if( d == 0 )
+        return DeclList();
+    Q_ASSERT( !d->inList ); // applies to the head
+    DeclList res;
+    while( d )
+    {
+        d->inList = 0;
+        res << d;
+        Declaration* old = d;
+        d = d->next;
+        old->next = 0; // the next based list is converted to DeclList, avoid two redundant lists
+    }
+    return res;
+}
+
 Type* AstModel::newType(Type::Kind k)
 {
     Type* t = new Type();
@@ -529,7 +593,6 @@ Type* AstModel::addType(const QByteArray& n, Type::Kind k)
         d->kind = Declaration::TypeDecl;
         d->validated = true;
         d->setType(t);
-        d->ownstype = true;
     }
     return t;
 }

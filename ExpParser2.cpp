@@ -472,15 +472,11 @@ Declaration* Parser2::addDecl(const Token& id, Declaration::Kind kind, bool chec
     return d;
 }
 
-Declaration *Parser2::addPseudoMemberTo(Declaration *super, const Token &id, Ast::Declaration::Kind kind)
+Declaration *Parser2::addPseudoMemberTo(const Token &id, Ast::Declaration::Kind kind)
 {
-    Declaration* d = new Declaration();
-    d->kind = kind;
-    d->name = id.d_val;
+    Declaration* d = addDecl(id, kind, false);
+    Q_ASSERT(d);
     d->n = 0; // name is a reference, not for lookup
-    // otherwise find(scopeStack.back()) finds the pseudo member instead of the name referred to
-    d->pos = id.toRowCol();
-    super->appendMember(d);
     return d;
 }
 
@@ -664,10 +660,9 @@ void Parser2::constant_body()
 
     Declaration* d = addDecl(name, Declaration::ConstDecl);
     Type* t = instantiable_type();
-    if( d ) {
+    if( d )
         d->setType(t);
-        d->ownstype = true;
-    } else
+    else
         delete t;
 
     expect(Tok_ColonEq, false, "constant_body");
@@ -682,47 +677,46 @@ void Parser2::constant_body()
 
 Declaration* Parser2::entity_decl()
 {
-    Declaration* entity = 0;
-    entity_head(entity);
-    if( entity )
-        entity_body(entity);
-    expect(Tok_END_ENTITY, false, "entity_decl");
-    expect(Tok_Semi, false, "entity_decl");
-    if( entity )
-        mdl->closeScope();
-    return entity;
-}
-
-void Parser2::entity_head(Declaration*& entity)
-{
     expect(Tok_ENTITY, false, "entity_head");
     expect(Tok_ident, false, "entity_head");
     Token name = cur;
 
-    entity = addDecl(name, Declaration::Entity);
-    if( entity ) {
-        mdl->openScope(entity);
-        subsuper(entity);
-    } else {
-        // still need to consume tokens even on duplicate
-        Declaration dummy;
-        dummy.kind = Declaration::Entity;
-        subsuper(&dummy);
-    }
+    Declaration* d = addDecl(name, Declaration::TypeDecl);
+    if( d == 0 )
+        return 0;
+
+    Type* entity = new Type();
+    entity->pos = name.toRowCol();
+    entity->kind = Type::ENTITY;
+    d->setType(entity);
+    entity->decl = d;
+
+    mdl->openScope(0);
+    subsuper(entity);
+
     expect(Tok_Semi, false, "entity_head");
+
+    entity_body();
+    expect(Tok_END_ENTITY, false, "entity_decl");
+    expect(Tok_Semi, false, "entity_decl");
+
+    entity->subs = AstModel::toList(mdl->closeScope(true));
+
+    return d;
 }
 
-void Parser2::subsuper(Declaration* entity)
+
+void Parser2::subsuper(Type* t)
 {
     if( FIRST_supertype_constraint(la.d_type) ) {
-        supertype_constraint(entity);
+        supertype_constraint(t);
     }
     if( FIRST_subtype_declaration(la.d_type) ) {
-        subtype_declaration(entity);
+        subtype_declaration();
     }
 }
 
-void Parser2::supertype_constraint(Declaration* entity)
+void Parser2::supertype_constraint(Type* entity)
 {
     if( la.d_type == Tok_ABSTRACT ) {
         expect(Tok_ABSTRACT, false, "supertype_constraint");
@@ -742,7 +736,7 @@ void Parser2::supertype_constraint(Declaration* entity)
         invalid("supertype_constraint");
 }
 
-void Parser2::subtype_constraint(Declaration* entity)
+void Parser2::subtype_constraint(Type* entity)
 {
     expect(Tok_OF, false, "subtype_constraint");
     expect(Tok_Lpar, false, "subtype_constraint");
@@ -750,17 +744,17 @@ void Parser2::subtype_constraint(Declaration* entity)
     expect(Tok_Rpar, false, "subtype_constraint");
 }
 
-void Parser2::subtype_declaration(Declaration* entity)
+void Parser2::subtype_declaration()
 {
     expect(Tok_SUBTYPE, false, "subtype_declaration");
     expect(Tok_OF, false, "subtype_declaration");
     expect(Tok_Lpar, false, "subtype_declaration");
     expect(Tok_ident, false, "subtype_declaration");
-    addPseudoMemberTo(entity, cur, Declaration::Supertype);
+    addPseudoMemberTo(cur, Declaration::Supertype);
     while( la.d_type == Tok_Comma ) {
         expect(Tok_Comma, false, "subtype_declaration");
         expect(Tok_ident, false, "subtype_declaration");
-        addPseudoMemberTo(entity, cur, Declaration::Supertype);
+        addPseudoMemberTo(cur, Declaration::Supertype);
     }
     expect(Tok_Rpar, false, "subtype_declaration");
 }
@@ -827,7 +821,7 @@ Expression* Parser2::one_of()
     return e;
 }
 
-void Parser2::entity_body(Declaration* entity)
+void Parser2::entity_body()
 {
     // explicit attributes
     while( FIRST_explicit_attr(la.d_type) ) {
@@ -870,8 +864,6 @@ void Parser2::explicit_attr()
         Declaration* attr = addDecl(n, Declaration::Attribute);
         if( attr ) {
             attr->setType(t);
-            // only the first one owns the type
-            attr->ownstype = (attr == mdl->findDecl(names.first().d_val, false));
             attr->optional_ = opt;
         }
     }
@@ -953,7 +945,6 @@ void Parser2::derived_attr()
         if( attr ) {
             attr->derived_ = true;
             attr->setType(t);
-            attr->ownstype = (attr == mdl->findDecl(names.first().d_val, false));
             attr->expr = e;
             e = 0; // only first attr owns the expression
         }
@@ -1066,7 +1057,6 @@ void Parser2::inverse_attr()
                 entRef->pos = entityName.toRowCol();
                 attr->setType(entRef);
             }
-            attr->ownstype = true;
         }
     }
     if( names.isEmpty() )
@@ -1131,7 +1121,6 @@ Declaration* Parser2::type_decl()
 
     if( d ) {
         d->setType(t);
-        d->ownstype = true;
         mdl->openScope(d);
     } else
         delete t;
@@ -1250,19 +1239,14 @@ void Parser2::enumeration_items(Type* t)
     expect(Tok_Lpar, false, "enumeration_items");
     expect(Tok_ident, false, "enumeration_items");
     {
-        Declaration* e = new Declaration();
-        e->kind = Declaration::Enumerator;
-        e->setName(cur.d_val);
-        e->pos = cur.toRowCol();
+        // add to global scope and allow duplicates
+        Declaration* e = addDecl(cur,Declaration::Enumerator, false);
         t->subs.append(e);
     }
     while( la.d_type == Tok_Comma ) {
         expect(Tok_Comma, false, "enumeration_items");
         expect(Tok_ident, false, "enumeration_items");
-        Declaration* e = new Declaration();
-        e->kind = Declaration::Enumerator;
-        e->setName(cur.d_val);
-        e->pos = cur.toRowCol();
+        Declaration* e = addDecl(cur,Declaration::Enumerator, false);
         t->subs.append(e);
     }
     expect(Tok_Rpar, false, "enumeration_items");
@@ -1641,17 +1625,6 @@ Type* Parser2::named_types()
 
 Declaration* Parser2::subtype_constraint_decl()
 {
-    Declaration* d = 0;
-    subtype_constraint_head(d);
-    if( d )
-        subtype_constraint_body(d);
-    expect(Tok_END_SUBTYPE_CONSTRAINT, false, "subtype_constraint_decl");
-    expect(Tok_Semi, false, "subtype_constraint_decl");
-    return d;
-}
-
-void Parser2::subtype_constraint_head(Declaration*& d)
-{
     expect(Tok_SUBTYPE_CONSTRAINT, false, "subtype_constraint_head");
     expect(Tok_ident, false, "subtype_constraint_head");
     Token name = cur;
@@ -1660,9 +1633,17 @@ void Parser2::subtype_constraint_head(Declaration*& d)
     Token forEntity = cur;
     expect(Tok_Semi, false, "subtype_constraint_head");
 
-    d = addDecl(name, Declaration::SubtypeConstraint);
+    Declaration* d = addDecl(name, Declaration::SubtypeConstraint);
     if( d )
+    {
         d->data = forEntity.d_val;
+        mdl->openScope(d);
+        subtype_constraint_body(d);
+        mdl->closeScope();
+    }
+    expect(Tok_END_SUBTYPE_CONSTRAINT, false, "subtype_constraint_decl");
+    expect(Tok_Semi, false, "subtype_constraint_decl");
+    return d;
 }
 
 void Parser2::subtype_constraint_body(Declaration* d)
@@ -1677,11 +1658,11 @@ void Parser2::subtype_constraint_body(Declaration* d)
         expect(Tok_TOTAL_OVER, false, "total_over");
         expect(Tok_Lpar, false, "total_over");
         expect(Tok_ident, false, "total_over");
-        addPseudoMemberTo(d, cur, Declaration::TotalOver);
+        addPseudoMemberTo(cur, Declaration::TotalOver);
         while( la.d_type == Tok_Comma ) {
             expect(Tok_Comma, false, "total_over");
             expect(Tok_ident, false, "total_over");
-            addPseudoMemberTo(d, cur, Declaration::TotalOver);
+            addPseudoMemberTo(cur, Declaration::TotalOver);
         }
         expect(Tok_Rpar, false, "total_over");
         expect(Tok_Semi, false, "total_over");
@@ -1740,10 +1721,9 @@ void Parser2::function_head(Declaration*& func)
     }
     expect(Tok_Colon, false, "function_head");
     Type* retType = parameter_type();
-    if( func ) {
+    if( func )
         func->setType(retType);
-        func->ownstype = true;
-    } else
+    else
         delete retType;
     expect(Tok_Semi, false, "function_head");
 }
@@ -1823,7 +1803,6 @@ void Parser2::formal_parameter(bool isVar)
         Declaration* p = addDecl(n, Declaration::ParamDecl);
         if( p ) {
             p->setType(t);
-            p->ownstype = (p == mdl->findDecl(names.first().d_val, false));
             p->varParam = isVar;
         }
     }
@@ -1878,7 +1857,6 @@ void Parser2::local_variable()
         Declaration* lv = addDecl(n, Declaration::LocalDecl);
         if( lv ) {
             lv->setType(t);
-            lv->ownstype = (lv == mdl->findDecl(names.first().d_val, false));
             lv->expr = init;
             init = 0; // only first variable owns the init expression
         }
@@ -1895,31 +1873,32 @@ void Parser2::local_variable()
 
 Declaration* Parser2::rule_decl()
 {
-    Declaration* rule = 0;
-    rule_head(rule);
-    if( rule ) {
-        algorithm_head();
-        Statement* first = 0;
-        while( FIRST_stmt(la.d_type) ) {
-            Statement* s = stmt();
-            if( s && first )
-                first->append(s);
-            else if( s )
-                first = s;
-        }
-        Statement* block = new Statement(Statement::StatBlock, first ? first->pos : RowCol());
-        block->body = first;
-        rule->body = block;
+    Declaration* rule = rule_head();
+    if( rule == 0 )
+        return 0;
 
-        where_clause();
-        mdl->closeScope();
+    algorithm_head();
+    Statement* first = 0;
+    while( FIRST_stmt(la.d_type) ) {
+        Statement* s = stmt();
+        if( s && first )
+            first->append(s);
+        else if( s )
+            first = s;
     }
+    Statement* block = new Statement(Statement::StatBlock, first ? first->pos : RowCol());
+    block->body = first;
+    rule->body = block;
+
+    where_clause();
+    mdl->closeScope();
+
     expect(Tok_END_RULE, false, "rule_decl");
     expect(Tok_Semi, false, "rule_decl");
     return rule;
 }
 
-void Parser2::rule_head(Declaration*& rule)
+Declaration* Parser2::rule_head()
 {
     expect(Tok_RULE, false, "rule_head");
     expect(Tok_ident, false, "rule_head");
@@ -1927,21 +1906,22 @@ void Parser2::rule_head(Declaration*& rule)
     expect(Tok_FOR, false, "rule_head");
     expect(Tok_Lpar, false, "rule_head");
 
-    rule = addDecl(name, Declaration::Rule);
-    if( rule )
-        mdl->openScope(rule);
+    Declaration* rule = addDecl(name, Declaration::Rule);
+    if( rule == 0 )
+        return 0;
+    mdl->openScope(rule);
 
     expect(Tok_ident, false, "rule_head");
-    if( rule )
-        addPseudoMemberTo(rule, cur, Declaration::RuleFor);
+    addPseudoMemberTo(cur, Declaration::RuleFor);
     while( la.d_type == Tok_Comma ) {
         expect(Tok_Comma, false, "rule_head");
         expect(Tok_ident, false, "rule_head");
         if( rule )
-            addPseudoMemberTo(rule, cur, Declaration::RuleFor);
+            addPseudoMemberTo(cur, Declaration::RuleFor);
     }
     expect(Tok_Rpar, false, "rule_head");
     expect(Tok_Semi, false, "rule_head");
+    return rule;
 }
 
 Statement* Parser2::stmt()

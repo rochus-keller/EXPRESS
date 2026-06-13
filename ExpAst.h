@@ -58,6 +58,7 @@ namespace Ast
         uint validated : 1;
         uint inList : 1;  // private, used for linked-list management
         uint forward : 1; // Type and Expression NameRefs
+        uint owned : 1;
 
         // Type flags:
         uint optional_ : 1;  // OPTIONAL attribute
@@ -79,7 +80,7 @@ namespace Ast
         // Expression flags:
         uint byVal : 1;
 
-        // 25 bits used
+        // 26 bits used
 
         RowCol pos;
 
@@ -94,7 +95,7 @@ namespace Ast
             optional_(0),unique_(0),fixed_(0),extensible_(0),genericEntity_(0),
             abstract_(0),supertype_(0),ownstype(0),hasErrors(0),
             varParam(0),derived_(0),inverse_(0),redeclared_(0),
-            byVal(0),_ty(0) {}
+            byVal(0),_ty(0), owned(0) {}
         ~Node();
     private:
         Type* _ty;
@@ -127,6 +128,8 @@ namespace Ast
             // constructed types
             ENUMERATION,
             SELECT,
+            // entity
+            ENTITY,
             // generalized types
             AGGREGATE,
             GENERIC,
@@ -136,7 +139,7 @@ namespace Ast
             MaxKind
         };
 
-        static const char* name[];
+        static const char* s_name[];
 
 #ifdef _DEBUG
         Kind kind;
@@ -146,13 +149,15 @@ namespace Ast
             Quali* quali;        // NameRef: qualified name reference
             Expression* expr;    // STRING/BINARY/REAL: width/precision
                                  // ARRAY/BAG/LIST/SET: low bound (high = expr->next)
+                                 // ENTITY: supertype_expression (ONEOF, AND, ANDOR)
             QByteArray* text;    // ENUM/SELECT: basedOn name
                                  // AGGREGATE/GENERIC/GENERIC_ENTITY: typeLabel
         };
         // base/element type for aggregations, REAL precision, STRING/BINARY width uses expr
         // for ENUMERATION: subs has enumerators; for SELECT: subs has select items
         QList<Declaration*> subs;
-        Declaration* decl; // resolved declaration for NameRef; not owned
+        Declaration* decl; // resolved declaration for NameRef or type decls; not owned
+        Declaration* find(const char* n, bool recursive = true) const;
 
         Type():expr(0),decl(0) { meta = T; kind = Undefined; }
         ~Type();
@@ -165,7 +170,6 @@ namespace Ast
             Invalid,
             Scope,        // helper scope
             Schema,
-            Entity,       
             TypeDecl,     // TYPE
             ConstDecl,    // CONSTANT
             Attribute,    // explicit entity attribute (also derived, inverse)
@@ -207,7 +211,7 @@ namespace Ast
         QVariant data;       // value for ConstDecl; schema version string; import info; constraintFor
 
         union {
-            Expression* expr;       // const value expression, supertype_expression (ONEOF, AND, ANDOR) and constraint body
+            Expression* expr;       // const value expression and constraint body
             Declaration* helper;    // for TypeDecl/Attribute: subsidiary decls
         };
 
@@ -215,8 +219,8 @@ namespace Ast
             { meta = D; kind = Invalid; }
 
         QList<Declaration*> getParams() const;
-        Declaration* find(const QByteArray& name, bool recursive = true) const;
-        Declaration* findInImports(const QByteArray& name) const;
+        Declaration* find(const char* n, bool recursive = true) const;
+        Declaration* findInImports(const char *n) const;
         Declaration* getLast() const;
         Declaration* getNext() const { return next; }
         void appendMember(Declaration*);
@@ -389,6 +393,7 @@ namespace Ast
 
         static void cleanupGlobals();
         static Declaration* getGlobalScope() { return globalScope; }
+        static DeclList toList(Declaration* d);
     protected:
         Type* newType(Type::Kind k);
         Type* addType(const QByteArray& name, Type::Kind k);

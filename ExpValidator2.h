@@ -108,19 +108,20 @@ namespace Exp {
 
         // helpers
         void resolveNameRefType(Ast::Type* nameRef, const RowCol& pos);
-        Ast::Declaration* find(const QByteArray& name, const RowCol& pos);
-        Ast::Declaration* findInEntity(Ast::Declaration* entity, const QByteArray& name);
+        Ast::Declaration* find(const char* n, const RowCol& pos, bool searchInEntity = true);
+        Ast::Declaration* findInEntity(Ast::Type* entity, const char* n);
         Ast::Type* deref(Ast::Type* t);
-        bool checkBuiltinArgs(quint16 builtin, const QList<Ast::Expression*>& args,
-                              Ast::Type** ret, const RowCol& pos);
-        void resolveSupertypes(Ast::Declaration* entity);
-        bool checkCircularSupertypes(Ast::Declaration* entity, QList<Ast::Declaration*>& seen);
+        bool checkBuiltinArgs(quint16 builtin, const QList<Ast::Expression*>& args, Ast::Type** ret, const RowCol& pos);
+        void resolveSupertypes(Ast::Type *entity);
+        bool checkCircularSupertypes(Ast::Type* entity, QList<Ast::Type*>& seen);
 
         void invalid(const char* what, const RowCol& pos);
         bool error(const RowCol& pos, const QString& msg) const;
         void markDecl(Ast::Declaration* d);
         Ast::Symbol* markRef(Ast::Declaration* d, const RowCol& pos);
         Ast::Symbol* markUnref(int len, const RowCol& pos);
+
+        static const char* sym(const QByteArray&);
 
     private:
         Ast::Declaration* curSchema;

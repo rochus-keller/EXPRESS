@@ -63,16 +63,15 @@ namespace Exp {
 
         // entity
         Ast::Declaration* entity_decl();
-        void entity_head(Ast::Declaration*& entity);
-        void subsuper(Ast::Declaration* entity);
-        void supertype_constraint(Ast::Declaration* entity);
-        void subtype_constraint(Ast::Declaration* entity);
-        void subtype_declaration(Ast::Declaration* entity);
+        void subsuper(Ast::Type *t);
+        void supertype_constraint(Ast::Type *);
+        void subtype_constraint(Ast::Type *entity);
+        void subtype_declaration();
         Ast::Expression* supertype_expression();
         Ast::Expression* supertype_factor();
         Ast::Expression* supertype_term();
         Ast::Expression* one_of();
-        void entity_body(Ast::Declaration* entity);
+        void entity_body();
         void explicit_attr();
         void attribute_decl(QList<Token>& names, bool& isSelf);
         void redeclared_attribute(QList<Token>& names);
@@ -116,7 +115,6 @@ namespace Exp {
 
         // subtype constraint decl
         Ast::Declaration* subtype_constraint_decl();
-        void subtype_constraint_head(Ast::Declaration*& d);
         void subtype_constraint_body(Ast::Declaration* d);
 
         // function/procedure/rule
@@ -129,7 +127,7 @@ namespace Exp {
         void local_decl();
         void local_variable();
         Ast::Declaration* rule_decl();
-        void rule_head(Ast::Declaration*& rule);
+        Ast::Declaration *rule_head();
 
         // statements
         Ast::Statement* stmt();
@@ -163,7 +161,7 @@ namespace Exp {
 
     protected:
         Ast::Declaration* addDecl(const Token& id, Ast::Declaration::Kind kind, bool checkDuplicate = true);
-        Ast::Declaration* addPseudoMemberTo(Ast::Declaration* super, const Token& id, Ast::Declaration::Kind kind);
+        Ast::Declaration* addPseudoMemberTo(const Token& id, Ast::Declaration::Kind kind);
         void error(const Token& t, const QString& msg);
         void error(const RowCol& rc, const QString& msg);
 

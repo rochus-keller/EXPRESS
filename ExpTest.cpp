@@ -139,12 +139,15 @@ public:
 
     Exp::Ast::Declaration* loadSchema( const Exp::Ast::Import& imp )
     {
-        Exp::Ast::Declaration* schema = findSchema(imp.name);
-        if( schema == 0 || schema->hasErrors )
-            return 0;
+        // schemas can reference each other, so there is no point of depth-first traversal.
+        // instead just deliver for name resolution and let validateAll give everyone a chance
+        return findSchema(imp.name);
+    }
 
+    bool validate( Exp::Ast::Declaration* schema )
+    {
         if( schema->validated )
-            return schema;
+            return true;
 
         Exp::Validator2 v(&mdl, this);
 
@@ -156,12 +159,29 @@ public:
             foreach( const Exp::Validator2::Error& e, v.errors )
                 qCritical() << "    " << e.pos.d_row << ":" << e.pos.d_col << ":" << e.msg.toUtf8().constData();
 
-            return 0;
+            return false;
         }else
         {
             qDebug() << "**** Validated schema" << schema->name << sd.sourcePath;
-            return schema;
+            return true;
         }
+    }
+
+    void validateAll()
+    {
+        int all = 0;
+        int ok = 0;
+        foreach( Exp::Ast::Declaration* schema, schemas )
+        {
+            if( validate(schema) )
+                ok++;
+            all++;
+            if( schema->validated )
+                continue;
+            if( schema->hasErrors )
+                return;
+        }
+        qDebug() << "Validated" << all << "files," << ok << "ok," << (all-ok) << "fail";
     }
 };
 
@@ -191,17 +211,7 @@ static void testParserValidator( const QStringList& files )
     if( fail )
         return;
 
-    foreach( Exp::Ast::Declaration* schema, loader.schemas )
-    {
-        if( schema->validated )
-            continue;
-
-        Exp::Ast::Import imp;
-        imp.name = schema->name;
-        loader.loadSchema(imp);
-        if( schema->hasErrors )
-            return;
-    }
+    loader.validateAll();
 }
 
 int main(int argc, char *argv[])
@@ -264,6 +274,7 @@ int main(int argc, char *argv[])
     QElapsedTimer t;
     t.start();
 
+    //testParser2(files);
     testParserValidator(files);
 
     qDebug() << "run for" << t.elapsed() << "[ms]";

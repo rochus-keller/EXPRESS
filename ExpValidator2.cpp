@@ -39,10 +39,10 @@ bool Validator2::validate(Declaration* s)
         return false;
     if( s->validated )
         return !s->hasErrors;
+    s->validated = true;
     curSchema = s;
     sourcePath = s->data.toString();
     Schema(s);
-    s->validated = true;
     s->hasErrors = !errors.isEmpty();
     return !s->hasErrors;
 }
@@ -76,7 +76,7 @@ void Validator2::Schema(Declaration* s)
     d = s->link;
     while( d )
     {
-        if( (d->kind == Declaration::TypeDecl || d->kind == Declaration::Entity) &&
+        if( (d->kind == Declaration::TypeDecl) &&
             d->type() && d->type()->kind == Type::NameRef && !d->type()->validated )
             resolveNameRefType(d->type(), d->pos);
         d = d->next;
@@ -135,7 +135,7 @@ void Validator2::ImportDecl(Declaration* useOrRef)
             item->validated = true;
             // item->name is the local name, item->data the original name in the foreign schema
             QByteArray foreignName = item->data.toByteArray();
-            Declaration* resolved = foreignSchema->find(foreignName, false);
+            Declaration* resolved = foreignSchema->find(sym(foreignName), false);
             if( !resolved )
             {
                 error(item->pos, QString("'%1' not found in schema '%2'")
@@ -176,9 +176,6 @@ bool Validator2::decl(Declaration* d)
         break;
     case Declaration::TypeDecl:
         TypeDecl(d);
-        break;
-    case Declaration::Entity:
-        EntityDecl(d);
         break;
     case Declaration::Attribute:
         AttributeDecl(d);
@@ -227,7 +224,12 @@ void Validator2::ConstDecl(Declaration* d)
 void Validator2::TypeDecl(Declaration* d)
 {
     if( d->type() )
-        Type_(d->type());
+    {
+        if( d->type()->kind == Type::ENTITY )
+            EntityDecl(d);
+        else
+            Type_(d->type());
+    }
 
     // validate WHERE rules in the body (if any)
     if( d->body )
@@ -239,34 +241,23 @@ void Validator2::EntityDecl(Declaration* d)
     scopeStack.push_back(d);
 
     // Resolve supertype references (SUBTYPE OF parent names)
-    resolveSupertypes(d);
+    resolveSupertypes(d->type());
+
+    QList<Type*> seen;
+    checkCircularSupertypes(d->type(), seen);
 
     // Validate supertype expression (ONEOF, AND, ANDOR)
-    if( d->expr )
+    if( d->expr ) // TODO: attached to decl or type?
         supertypeExpr(d->expr);
 
     // Validate members: attributes, local declarations
-    Declaration* member = d->link;
-    while( member )
-    {
-        if( member->kind == Declaration::Attribute )
-            decl(member);
-        else if( member->kind == Declaration::Supertype )
+    if( d->type() )
+        foreach( Declaration* member, d->type()->subs )
         {
-            // resolve the parent entity name
-            Declaration* parent = find( member->name, member->pos);
-            if( parent && parent->kind != Declaration::Entity && !parent->hasErrors )
-            {
-                error(member->pos, QString("'%1' is not an entity").arg(member->name.constData()));
-                member->hasErrors = true;
-            }
+            if( member->kind == Declaration::Attribute )
+                decl(member);
         }
-        member = member->next;
-    }
 
-    // Validate WHERE rules
-    if( d->body )
-        Body(d->body);
 
     scopeStack.pop_back();
 }
@@ -341,12 +332,13 @@ void Validator2::RuleDecl(Declaration* d)
         {
             Q_ASSERT(member->validated == false);
             member->validated = true;
-            Declaration* entity = find( member->name, member->pos);
+            Q_ASSERT(member->n == 0);
+            Declaration* entity = find(sym(member->name), member->pos);
             if( entity == 0 )
             {
                 error(member->pos, QString("'%1' cannot be resolved").arg(member->name.constData()));
                 member->hasErrors = true;
-            }else if( entity->kind != Declaration::Entity )
+            }else if( entity->kind != Declaration::TypeDecl || entity->type() == 0 || entity->type()->kind != Type::ENTITY )
             {
                 error(member->pos, QString("'%1' is not an entity (RULE FOR)").arg(member->name.constData()));
                 member->hasErrors = true;
@@ -372,36 +364,37 @@ void Validator2::SubtypeConstraintDecl(Declaration* d)
     QByteArray entityName = d->data.toByteArray();
     if( !entityName.isEmpty() )
     {
-        Declaration* entity = find( entityName, d->pos);
-        if( entity && entity->kind != Declaration::Entity )
+        Declaration* entity = find(sym(entityName), d->pos);
+        if( entity && (entity->kind != Declaration::TypeDecl || entity->type() == 0 || entity->type()->kind != Type::ENTITY) )
             error(d->pos, QString("'%1' is not an entity (SUBTYPE_CONSTRAINT FOR)").arg(entityName.constData()));
     }
 
     // resolve TotalOver entities
-    Declaration* member = d->link;
-    while( member )
-    {
-        if( member->kind == Declaration::TotalOver )
+    if( d->type() )
+        foreach( Declaration* member, d->type()->subs)
         {
-            Q_ASSERT(member->validated == false);
-            member->validated = true;
-            Declaration* entity = find(member->name, member->pos);
-            if( entity == 0 )
+            if( member->kind == Declaration::TotalOver )
             {
-                error(member->pos, QString("'%1' cannot be resolved").arg(member->name.constData()));
-                member->hasErrors = true;
-            }else if( entity && entity->kind != Declaration::Entity )
-            {
-                error(member->pos, QString("'%1' is not an entity (TOTAL_OVER)").arg(member->name.constData()));
-                member->hasErrors = true;
-            }else
-                member->data = QVariant::fromValue(entity);
+                Q_ASSERT(member->validated == false);
+                member->validated = true;
+                Q_ASSERT(member->n);
+                Declaration* entity = find(member->n, member->pos);
+                if( entity == 0 )
+                {
+                    error(member->pos, QString("'%1' cannot be resolved").arg(member->name.constData()));
+                    member->hasErrors = true;
+                }else if( entity && (entity->kind != Declaration::TypeDecl || entity->type() == 0 || entity->type()->kind != Type::ENTITY) )
+                {
+                    error(member->pos, QString("'%1' is not an entity (TOTAL_OVER)").arg(member->name.constData()));
+                    member->hasErrors = true;
+                }else
+                    member->data = QVariant::fromValue(entity);
+            }
+            member = member->next;
         }
-        member = member->next;
-    }
 
     // constraint expression (ONEOF, AND, ANDOR)
-    if( d->expr )
+    if( d->expr ) // TODO: here or in t->expr?
         supertypeExpr(d->expr);
 }
 
@@ -441,7 +434,8 @@ bool Validator2::Type_(Type* t)
             Declaration* si = t->subs[i];
             if( si && si->kind == Declaration::SelectItem )
             {
-                Declaration* resolved = find(si->name, si->pos);
+                Q_ASSERT(si->n);
+                Declaration* resolved = find(si->n, si->pos);
                 if( resolved )
                     markRef(resolved, si->pos);
             }
@@ -809,16 +803,17 @@ bool Validator2::nameRef(Expression* e)
     if( name.isEmpty() )
         return false;
 
-    Declaration* d = find(name, e->pos);
+    Declaration* d = find(sym(name), e->pos);
     if( d == 0 )
     {
-        // Could not resolve; leave as NameRef
+        // d = find(sym(name), e->pos); // TEST
         error(e->pos,QString("cannot resolve '%1'").arg(name.constData()));
         e->forward = true;
         return false;
     }
 
     // Resolve: convert NameRef to DeclRef
+    // qDebug() << "resolved" << d->scopedName() << "from" << curSchema->name;
     e->kind = Expression::DeclRef;
     e->val = QVariant::fromValue(d);
     markRef(d, e->pos);
@@ -858,7 +853,7 @@ bool Validator2::groupRef(Expression* e)
     QByteArray groupName = e->val.toByteArray();
     if( !groupName.isEmpty() )
     {
-        Declaration* d = find(groupName, e->pos);
+        Declaration* d = find(sym(groupName), e->pos);
         if( d )
             markRef(d, e->pos);
     }
@@ -1060,7 +1055,7 @@ void Validator2::resolveNameRefType(Type* t, const RowCol& pos)
     if( name.isEmpty() )
         return;
 
-    Declaration* d = find(name, pos);
+    Declaration* d = find(sym(name), pos, false);
     if( d == 0 )
     {
         // could be a forward reference; mark for later
@@ -1068,8 +1063,9 @@ void Validator2::resolveNameRefType(Type* t, const RowCol& pos)
         return;
     }
 
-    if( d->kind != Declaration::TypeDecl && d->kind != Declaration::Entity )
+    if( d->kind != Declaration::TypeDecl )
     {
+        // d = find(sym(name), pos); // TEST
         error(pos, QString("'%1' is not a type or entity").arg(name.constData()));
         return;
     }
@@ -1078,59 +1074,82 @@ void Validator2::resolveNameRefType(Type* t, const RowCol& pos)
     markRef(d, pos);
 }
 
-Declaration* Validator2::find(const QByteArray& name, const RowCol& pos)
+Declaration* Validator2::find(const char* n, const RowCol& pos, bool searchInEntity)
 {
     Q_UNUSED(pos);
-    if( name.isEmpty() )
+    if( n == 0 )
         return 0;
 
     Q_ASSERT( !scopeStack.isEmpty() );
-    Declaration* d = scopeStack.back()->find(name);
+    Declaration* back = scopeStack.back();
+    if( searchInEntity && back->kind == Declaration::TypeDecl && back->type() && back->type()->kind == Type::ENTITY )
+    {
+        Declaration* d = findInEntity(back->type(), n);
+        if( d )
+            return d;
+    }
+    Declaration* d = back->find(n);
     if( d )
         return d;
 
     Declaration* global = AstModel::getGlobalScope();
     if( global )
     {
-        Declaration* d = global->find(name, false);
+        Declaration* d = global->find(n, false);
         if( d )
             return d;
     }
 
     if( curSchema )
     {
-        Declaration* d = curSchema->findInImports(name);
+        Declaration* d = curSchema->findInImports(n);
         if( d )
             return d;
     }
     return 0;
 }
 
-Declaration* Validator2::findInEntity(Declaration* entity, const QByteArray& name)
+Declaration* Validator2::findInEntity(Type* entity, const char* n)
 {
     if( entity == 0 )
         return 0;
 
     // Search local members
-    Declaration* d = entity->find(name, false);
+    Declaration* d = entity->find(n, false);
     if( d )
         return d;
 
     // Search supertypes (Supertype kind children of entity)
-    Declaration* member = entity->link;
-    while( member )
+    // TODO: this belongs into entity->find
+    foreach( Declaration* member, entity->subs)
     {
         if( member->kind == Declaration::Supertype )
         {
-            Declaration* parent = find(member->name, member->pos);
-            if( parent && parent->kind == Declaration::Entity )
+            Declaration* parent = member->data.value<Declaration*>();
+            if( !parent && !member->validated )
             {
-                d = findInEntity(parent, name);
+                Q_ASSERT(member->n == 0);
+                const char* mn = sym(member->name);
+                Declaration* scope = entity->decl ? entity->decl->outer : curSchema;
+                if (scope)
+                    parent = scope->find(mn, true);
+                if (!parent)
+                {
+                    Declaration* global = AstModel::getGlobalScope();
+                    if( global )
+                        parent = global->find(mn, false);
+                }
+                if (!parent && curSchema)
+                    parent = curSchema->findInImports(mn);
+            }
+
+            if( parent && parent->kind == Declaration::TypeDecl && parent->type() && parent->type()->kind == Type::ENTITY && parent->type() != entity )
+            {
+                d = findInEntity(parent->type(), n);
                 if( d )
                     return d;
             }
         }
-        member = member->next;
     }
     return 0;
 }
@@ -1294,23 +1313,27 @@ bool Validator2::checkBuiltinArgs(quint16 builtin, const QList<Expression*>& arg
     return true;
 }
 
-void Validator2::resolveSupertypes(Declaration* entity)
+void Validator2::resolveSupertypes(Type* entity)
 {
+    if( !entity )
+        return;
     // Walk the entity's Supertype kind children and resolve them
-    Declaration* member = entity->link;
-    while( member )
+    foreach( Declaration* member, entity->subs)
     {
         if( member->kind == Declaration::Supertype )
         {
             Q_ASSERT(member->validated == false);
             member->validated = true;
-            Declaration* parent = find(member->name, member->pos);
+            Q_ASSERT(member->n == 0);
+            const char* n = sym(member->name);
+            Declaration* parent = find(n, member->pos);
             if( parent == 0 )
             {
+                // parent = find(member->name, member->pos); // TEST
                 error(member->pos, QString("cannot resolve supertype '%1'").arg(member->name.constData()));
                 member->hasErrors = true;
             }
-            else if( parent->kind != Declaration::Entity )
+            else if( parent->kind != Declaration::TypeDecl || parent->type() == 0 || parent->type()->kind != Type::ENTITY )
             {
                 error(member->pos, QString("'%1' is not an entity (SUBTYPE OF)").arg(member->name.constData()));
                 member->hasErrors = true;
@@ -1320,35 +1343,53 @@ void Validator2::resolveSupertypes(Declaration* entity)
                 markRef(parent, member->pos);
                 member->data = QVariant::fromValue(parent);
                 // register subtype relationship
-                subs[parent].append(entity);
+                Q_ASSERT(entity->decl);
+                subs[parent].append(entity->decl);
             }
         }
         member = member->next;
     }
 }
 
-bool Validator2::checkCircularSupertypes(Declaration* entity, QList<Declaration*>& seen)
+bool Validator2::checkCircularSupertypes(Type* entity, QList<Type*>& seen)
 {
+    if( entity == 0 )
+        return false;
     if( seen.contains(entity) )
     {
-        error(entity->pos, QString("circular supertype hierarchy involving '%1'").arg(entity->name.constData()));
+        Q_ASSERT(entity->decl);
+        error(entity->pos, QString("circular supertype hierarchy involving '%1'").arg(entity->decl->name.constData()));
         return true;
     }
     seen.append(entity);
 
-    Declaration* member = entity->link;
-    while( member )
+    foreach( Declaration* member, entity->subs)
     {
         if( member->kind == Declaration::Supertype )
         {
-            Declaration* parent = find(member->name, member->pos);
-            if( parent && parent->kind == Declaration::Entity )
+            Declaration* parent = member->data.value<Declaration*>();
+            if( !parent && !member->validated )
             {
-                if( checkCircularSupertypes(parent, seen) )
+                const char* mn = sym(member->name);
+                Declaration* scope = entity->decl ? entity->decl->outer : curSchema;
+                if (scope)
+                    parent = scope->find(mn, true);
+                if (!parent)
+                {
+                    Declaration* global = AstModel::getGlobalScope();
+                    if( global )
+                        parent = global->find(mn, false);
+                }
+                if (!parent && curSchema)
+                    parent = curSchema->findInImports(mn);
+            }
+
+            if( parent && parent->kind == Declaration::TypeDecl && parent->type() && parent->type()->kind == Type::ENTITY )
+            {
+                if( checkCircularSupertypes(parent->type(), seen) )
                     return true;
             }
         }
-        member = member->next;
     }
     seen.removeLast();
     return false;
@@ -1417,4 +1458,9 @@ Symbol* Validator2::markUnref(int len, const RowCol& pos)
         first = sym;
     last = sym;
     return sym;
+}
+
+const char *Validator2::sym(const QByteArray & name)
+{
+    return Token::getSymbol(name.toUpper()).constData();
 }
